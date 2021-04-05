@@ -1,5 +1,18 @@
-// COL216 Minor
+// COL216 Assignment 4
+// Mallika Prabhakar 2019CS50440
 // Sayam Sethi 2019CS10399
+
+/*
+	@TODO
+	unordered_map of array (for registers), unordered_map (for store)
+	replace purpose of counter with last address to update (for overwrite)
+	introduce priority in updateRegisterBuffer (when unsafe encountered)
+
+	@IMPROVEMENTS
+	remove redundancy (prevent DRAM execution of update register)
+	actually introduce register buffer (will probably be easier since currBuffer will not be predecided)
+	modify executeCommands to possibly remove "redundant" buffer operation in the function (better modularity)
+*/
 
 #include <bits/stdc++.h>
 #include <boost/tokenizer.hpp>
@@ -441,7 +454,7 @@ struct MIPS_Architecture
 		}
 		else
 			data[sec[2]][sec[3]] = sec[1];
-		if (DRAM_Buffer.front().second[4] == -1)
+		if (!DRAM_Buffer.empty())
 			DRAM_Buffer.front().second[4] = clockCycles + 1;
 		printDRAMCompletion(top.first.second, sec[4], clockCycles);
 	}
