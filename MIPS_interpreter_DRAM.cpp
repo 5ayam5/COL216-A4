@@ -2,11 +2,6 @@
 // Mallika Prabhakar 2019CS50440
 // Sayam Sethi 2019CS10399
 
-/*
-	@IMPROVEMENTS
-	actually introduce register buffer (will probably be easier since currRow will not be predecided)
-*/
-
 #include <bits/stdc++.h>
 #include <boost/tokenizer.hpp>
 
@@ -436,12 +431,7 @@ public:
 			{
 				// first lw/sw operation in the entire code
 				if (currRow == -1)
-				{
-					bufferUpdate(DRAM_Buffer.begin()->first);
-					currCol = DRAM_Buffer[currRow].begin()->first;
-					DRAM_Buffer[currRow][currCol].front().startCycle = clockCycles + 1;
-					DRAM_Buffer[currRow][currCol].front().remainingCycles = delay;
-				}
+					setNextDRAM(DRAM_Buffer.begin()->first, DRAM_Buffer[DRAM_Buffer.begin()->first].begin()->first);
 				else if (--DRAM_Buffer[currRow][currCol].front().remainingCycles == 0)
 					finishCurrDRAM();
 			}
@@ -449,36 +439,28 @@ public:
 		}
 		while (!DRAM_Buffer.empty())
 			finishCurrDRAM();
-		bufferUpdate(-1);
+		bufferUpdate();
 		handleExit(0);
 	}
 
-	// wait and finish DRAM communication
+	// finish the currently running DRAM instruction and set the next one
 	void finishCurrDRAM(int nextRegister = -1)
 	{
 		auto &Q = DRAM_Buffer[currRow][currCol];
 		int nextRow = currRow, nextCol = currCol;
 		QElem top = DRAM_Buffer[currRow][currCol].front();
-		Q.pop();
-		if (Q.empty())
-		{
-			DRAM_Buffer[currRow].erase(currCol);
-			if (DRAM_Buffer[currRow].empty())
-			{
-				DRAM_Buffer.erase(currRow);
-				if (!DRAM_Buffer.empty())
-					nextRow = DRAM_Buffer.begin()->first;
-			}
-			if (!DRAM_Buffer.empty())
-				nextCol = DRAM_Buffer[nextRow].begin()->first;
-		}
+		popAndUpdate(Q, nextRow, nextCol);
 
 		clockCycles += top.remainingCycles;
 		if (top.id)
 		{
 			registers[top.value] = data[currRow][currCol];
 			if (registersAddrDRAM[top.value].first == top.issueCycle)
+			{
 				registersAddrDRAM[top.value] = {-1, -1};
+				if (nextRegister == top.value)
+					nextRegister = -1;
+			}
 		}
 		else
 			data[currRow][currCol] = top.value;
@@ -487,7 +469,8 @@ public:
 		setNextDRAM(nextRow, nextCol, nextRegister);
 	}
 
-	void setNextDRAM(int nextRow, int nextCol, int nextRegister)
+	// set the next DRAM command to be executed (implements reordering)
+	void setNextDRAM(int nextRow, int nextCol, int nextRegister = -1)
 	{
 		if (DRAM_Buffer.empty())
 			return;
@@ -496,41 +479,39 @@ public:
 			nextRow = registersAddrDRAM[nextRegister].second / ROWS;
 			nextCol = (registersAddrDRAM[nextRegister].second % ROWS) / 4;
 		}
+
 		QElem top = DRAM_Buffer[nextRow][nextCol].front();
-		while (true)
-		{
+		while (top.id && registersAddrDRAM[top.value].first != top.issueCycle && popAndUpdate(DRAM_Buffer[nextRow][nextCol], nextRow, nextCol))
 			top = DRAM_Buffer[nextRow][nextCol].front();
-			while (top.id && registersAddrDRAM[top.value].first != top.issueCycle)
-			{
-				DRAM_Buffer[nextRow][nextCol].pop();
-				if (DRAM_Buffer[nextRow][nextCol].empty())
-					break;
-				top = DRAM_Buffer[nextRow][nextCol].front();
-			}
-			if (DRAM_Buffer[nextRow][nextCol].empty())
-			{
-				DRAM_Buffer[nextRow].erase(nextCol);
-				if (DRAM_Buffer[nextRow].empty())
-				{
-					DRAM_Buffer.erase(nextRow);
-					if (!DRAM_Buffer.empty())
-						nextRow = DRAM_Buffer.begin()->first;
-				}
-				if (DRAM_Buffer.empty())
-					return;
-				nextCol = DRAM_Buffer[nextRow].begin()->first;
-			}
-			else
-				break;
-		}
-		bufferUpdate(nextRow);
-		currCol = nextCol;
+
+		bufferUpdate(nextRow, nextCol);
 		DRAM_Buffer[currRow][currCol].front().startCycle = clockCycles + 1;
 		DRAM_Buffer[currRow][currCol].front().remainingCycles = delay;
 	}
 
+	// pop the queue element and update the row and column if needed (returns false if DRAM empty after pop)
+	bool popAndUpdate(queue<QElem> &Q, int &row, int &col)
+	{
+		Q.pop();
+		if (Q.empty())
+		{
+			DRAM_Buffer[row].erase(col);
+			if (DRAM_Buffer[row].empty())
+			{
+				DRAM_Buffer.erase(row);
+				if (!DRAM_Buffer.empty())
+					row = DRAM_Buffer.begin()->first;
+			}
+			if (DRAM_Buffer.empty())
+				return false;
+			col = DRAM_Buffer[row].begin()->first;
+			return true;
+		}
+		return false;
+	}
+
 	// implement buffer update
-	void bufferUpdate(int row)
+	void bufferUpdate(int row = -1, int col = -1)
 	{
 		if (row == -1)
 			delay = (currRow != -1) * row_access_delay, rowBufferUpdates += (currRow != -1);
@@ -540,7 +521,7 @@ public:
 			delay = 2 * row_access_delay + col_access_delay, ++rowBufferUpdates;
 		else
 			delay = col_access_delay;
-		currRow = row;
+		currRow = row, currCol = col;
 	}
 
 	// prints the cycle info of DRAM delay
