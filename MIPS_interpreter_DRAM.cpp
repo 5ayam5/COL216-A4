@@ -2,6 +2,8 @@
 // Mallika Prabhakar 2019CS50440
 // Sayam Sethi 2019CS10399
 
+// @TODO forwarding, overwrite in addi and op
+
 #include <bits/stdc++.h>
 #include <boost/tokenizer.hpp>
 
@@ -23,7 +25,6 @@ private:
 		 * @param PCaddr stores the PC address of corresponding instruction
 		 * @param value content to be stored (for sw) / register id (for lw)
 		 * @param issueCycle the cycle in which the request was issued
-		 * @param column column of the associated instruction
 		 * @param startCycle the cycle when the instruction began
 		 * @param remainingCycles number of cycles pending to finish execution of request
 		*/
@@ -95,8 +96,10 @@ public:
 			return 1;
 		try
 		{
-			// if (registersAddrDRAM[registerMap[r1]] || registersAddrDRAM[registerMap[r2]])
-			// 	return -1;
+			if (registersAddrDRAM[registerMap[r1]] != make_pair(-1, -1))
+				return -registerMap[r1] - 1;
+			if (registersAddrDRAM[registerMap[r2]] != make_pair(-1, -1))
+				return -registerMap[r2] - 1;
 			registers[registerMap[r1]] = registers[registerMap[r2]] + stoi(num);
 			PCnext = PCcurr + 1;
 			return 0;
@@ -136,8 +139,12 @@ public:
 	{
 		if (!checkRegisters({r1, r2, r3}) || registerMap[r1] == 0)
 			return 1;
-		// if (registersAddrDRAM[registerMap[r1]] || registersAddrDRAM[registerMap[r2]] || registersAddrDRAM[registerMap[r3]])
-		// 	return -1;
+		if (registersAddrDRAM[registerMap[r1]] != make_pair(-1, -1))
+			return -registerMap[r1] - 1;
+		if (registersAddrDRAM[registerMap[r2]] != make_pair(-1, -1))
+			return -registerMap[r2] - 1;
+		if (registersAddrDRAM[registerMap[r3]] != make_pair(-1, -1))
+			return -registerMap[r3] - 1;
 		registers[registerMap[r1]] = operation(registers[registerMap[r2]], registers[registerMap[r3]]);
 		PCnext = PCcurr + 1;
 		return 0;
@@ -164,8 +171,10 @@ public:
 			return 2;
 		if (!checkRegisters({r1, r2}))
 			return 1;
-		// if (registersAddrDRAM[registerMap[r1]] || registersAddrDRAM[registerMap[r2]])
-		// 	return -1;
+		if (registersAddrDRAM[registerMap[r1]] != make_pair(-1, -1))
+			return -registerMap[r1] - 1;
+		if (registersAddrDRAM[registerMap[r2]] != make_pair(-1, -1))
+			return -registerMap[r2] - 1;
 		PCnext = comp(registers[registerMap[r1]], registers[registerMap[r2]]) ? address[label] : PCcurr + 1;
 		return 0;
 	}
@@ -186,11 +195,11 @@ public:
 	{
 		if (!checkRegister(r) || registerMap[r] == 0)
 			return 1;
-		int address = locateAddress(location);
-		if (address < 0)
-			return abs(address);
-		DRAM_Buffer[address / ROWS][(address % ROWS) / 4].push({1, PCcurr, registerMap[r], clockCycles + 1});
-		registersAddrDRAM[registerMap[r]] = {clockCycles + 1, address};
+		auto address = locateAddress(location);
+		if (!address.first)
+			return address.second;
+		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({1, PCcurr, registerMap[r], clockCycles});
+		registersAddrDRAM[registerMap[r]] = {clockCycles, address.second};
 		PCnext = PCcurr + 1;
 		return 0;
 	}
@@ -200,19 +209,19 @@ public:
 	{
 		if (!checkRegister(r))
 			return 1;
-		int address = locateAddress(location);
-		if (address < 0)
-			return abs(address);
+		auto address = locateAddress(location);
+		if (!address.first)
+			return address.second;
 		if (registersAddrDRAM[registerMap[r]] != make_pair(-1, -1))
 			return -registerMap[r] - 1;
-		DRAM_Buffer[address / ROWS][(address % ROWS) / 4].push({0, PCcurr, registers[registerMap[r]], clockCycles + 1});
+		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({0, PCcurr, registers[registerMap[r]], clockCycles});
 		++rowBufferUpdates;
 		PCnext = PCcurr + 1;
 		return 0;
 	}
 
 	// parse the address and return the actual address or error
-	int locateAddress(string location)
+	pair<bool, int> locateAddress(string location)
 	{
 		if (location.back() == ')')
 		{
@@ -222,27 +231,29 @@ public:
 				string reg = location.substr(lparen + 1);
 				reg.pop_back();
 				if (!checkRegister(reg))
-					return -3;
+					return {false, 3};
+				if (registersAddrDRAM[registerMap[reg]] != make_pair(-1, -1))
+					return {false, -registerMap[reg] - 1};
 				int address = registers[registerMap[reg]] + offset;
 				if (address % 4 || address < int(4 * commands.size()) || address >= MAX)
-					return -3;
-				return address;
+					return {false, 3};
+				return {true, address};
 			}
 			catch (exception &e)
 			{
-				return -4;
+				return {false, 4};
 			}
 		}
 		try
 		{
 			int address = stoi(location);
 			if (address % 4 || address < int(4 * commands.size()) || address >= MAX)
-				return -3;
-			return address;
+				return {false, 3};
+			return {true, address};
 		}
 		catch (exception &e)
 		{
-			return -4;
+			return {false, 4};
 		}
 	}
 
@@ -419,18 +430,18 @@ public:
 				handleExit(ret);
 				return;
 			}
-			while (ret != 0)
+			if (ret != 0)
 			{
 				finishCurrDRAM(-ret - 1);
-				ret = instructions[command[0]](*this, command[1], command[2], command[3]);
+				continue;
 			}
 			++clockCycles;
 			++commandCount[PCcurr];
 			PCcurr = PCnext;
 			if (!DRAM_Buffer.empty())
 			{
-				// first lw/sw operation in the entire code
-				if (currRow == -1)
+				// first lw/sw operation after DRAM_buffer emptied
+				if (currCol == -1)
 					setNextDRAM(DRAM_Buffer.begin()->first, DRAM_Buffer[DRAM_Buffer.begin()->first].begin()->first);
 				else if (--DRAM_Buffer[currRow][currCol].front().remainingCycles == 0)
 					finishCurrDRAM();
@@ -473,7 +484,10 @@ public:
 	void setNextDRAM(int nextRow, int nextCol, int nextRegister = -1)
 	{
 		if (DRAM_Buffer.empty())
+		{
+			currCol = -1;
 			return;
+		}
 		if (nextRegister != -1)
 		{
 			nextRow = registersAddrDRAM[nextRegister].second / ROWS;
@@ -559,7 +573,7 @@ public:
 	// initialize variables before executing commands
 	void initVars()
 	{
-		clockCycles = 0, PCcurr = 0, rowBufferUpdates = 0, currRow = -1;
+		clockCycles = 0, PCcurr = 0, rowBufferUpdates = 0, currRow = -1, currCol = -1;
 		fill_n(registers, 32, 0);
 		fill_n(registersAddrDRAM, 32, make_pair(-1, -1));
 		data = vector<vector<int>>(ROWS, vector<int>(ROWS >> 2, 0));
