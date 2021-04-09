@@ -472,6 +472,10 @@ public:
 		QElem top = DRAM_Buffer[currRow][currCol].front();
 		popAndUpdate(Q, nextRow, nextCol);
 
+		if (lastAddr==make_pair(nextRow,nextCol))
+		{
+			/* code */
+		} else {
 		clockCycles += top.remainingCycles;
 		if (top.id)
 		{
@@ -485,9 +489,14 @@ public:
 		}
 		else
 			data[currRow][currCol] = top.value;
-		printDRAMCompletion(top.PCaddr, top.startCycle, clockCycles);
+		}
 
+		printDRAMCompletion(top.PCaddr, top.startCycle, clockCycles);
 		setNextDRAM(nextRow, nextCol, nextRegister);
+
+		//updating the last location
+		lastAddr.first=currRow;
+		lastAddr.second=currCol;
 	}
 
 	// set the next DRAM command to be executed (implements reordering)
@@ -595,7 +604,7 @@ public:
 		commandCount.clear();
 		commandCount.assign(commands.size(), 0);
 		DRAM_Buffer.clear();
-		lastAddr= make_pair(-1,-1);
+		lastAddr= {-1,-1};
 	}
 };
 
