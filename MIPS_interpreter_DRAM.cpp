@@ -2,7 +2,7 @@
 // Mallika Prabhakar 2019CS50440
 // Sayam Sethi 2019CS10399
 
-// @TODO forwarding, overwrite in addi and op
+// @TODO forwarding
 
 #include <bits/stdc++.h>
 #include <boost/tokenizer.hpp>
@@ -97,7 +97,11 @@ public:
 		try
 		{
 			if (registersAddrDRAM[registerMap[r1]] != make_pair(-1, -1))
-				return -registerMap[r1] - 1;
+			{
+				if (DRAM_Buffer[currRow][currCol].front().issueCycle == registersAddrDRAM[registerMap[r1]].first)
+					return -registerMap[r1] - 1;
+				registersAddrDRAM[registerMap[r1]] = {-1, -1};
+			}
 			if (registersAddrDRAM[registerMap[r2]] != make_pair(-1, -1))
 				return -registerMap[r2] - 1;
 			registers[registerMap[r1]] = registers[registerMap[r2]] + stoi(num);
@@ -140,7 +144,11 @@ public:
 		if (!checkRegisters({r1, r2, r3}) || registerMap[r1] == 0)
 			return 1;
 		if (registersAddrDRAM[registerMap[r1]] != make_pair(-1, -1))
-			return -registerMap[r1] - 1;
+		{
+			if (DRAM_Buffer[currRow][currCol].front().issueCycle == registersAddrDRAM[registerMap[r1]].first)
+				return -registerMap[r1] - 1;
+			registersAddrDRAM[registerMap[r1]] = {-1, -1};
+		}
 		if (registersAddrDRAM[registerMap[r2]] != make_pair(-1, -1))
 			return -registerMap[r2] - 1;
 		if (registersAddrDRAM[registerMap[r3]] != make_pair(-1, -1))
@@ -198,8 +206,8 @@ public:
 		auto address = locateAddress(location);
 		if (!address.first)
 			return address.second;
-		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({1, PCcurr, registerMap[r], clockCycles});
-		registersAddrDRAM[registerMap[r]] = {clockCycles, address.second};
+		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({1, PCcurr, registerMap[r], clockCycles + 1});
+		registersAddrDRAM[registerMap[r]] = {clockCycles + 1, address.second};
 		PCnext = PCcurr + 1;
 		return 0;
 	}
@@ -214,7 +222,7 @@ public:
 			return address.second;
 		if (registersAddrDRAM[registerMap[r]] != make_pair(-1, -1))
 			return -registerMap[r] - 1;
-		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({0, PCcurr, registers[registerMap[r]], clockCycles});
+		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({0, PCcurr, registers[registerMap[r]], clockCycles + 1});
 		++rowBufferUpdates;
 		PCnext = PCcurr + 1;
 		return 0;
@@ -498,6 +506,11 @@ public:
 		while (top.id && registersAddrDRAM[top.value].first != top.issueCycle && popAndUpdate(DRAM_Buffer[nextRow][nextCol], nextRow, nextCol))
 			top = DRAM_Buffer[nextRow][nextCol].front();
 
+		if (DRAM_Buffer.empty())
+		{
+			currCol = -1;
+			return;
+		}
 		bufferUpdate(nextRow, nextCol);
 		DRAM_Buffer[currRow][currCol].front().startCycle = clockCycles + 1;
 		DRAM_Buffer[currRow][currCol].front().remainingCycles = delay;
