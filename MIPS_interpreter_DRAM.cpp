@@ -208,9 +208,17 @@ public:
 		auto address = locateAddress(location);
 		if (!address.first)
 			return address.second;
+
+		PCnext = PCcurr + 1;
+		if (address.second == lastAddr.first && (registersAddrDRAM[registerMap[r]] == make_pair(-1, -1) || DRAM_Buffer[currRow][currCol].front().issueCycle != registersAddrDRAM[registerMap[r]].first))
+		{
+			registers[registerMap[r]] = lastAddr.second;
+			registersAddrDRAM[registerMap[r]] = {-1, -1};
+			return 0;
+		}
+
 		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({1, PCcurr, registerMap[r], clockCycles + 1});
 		registersAddrDRAM[registerMap[r]] = {clockCycles + 1, address.second};
-		PCnext = PCcurr + 1;
 		return 0;
 	}
 
@@ -224,6 +232,9 @@ public:
 			return address.second;
 		if (registersAddrDRAM[registerMap[r]] != make_pair(-1, -1))
 			return -registerMap[r] - 1;
+
+		lastAddr = {address.second, registers[registerMap[r]]};
+
 		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({0, PCcurr, registers[registerMap[r]], clockCycles + 1});
 		++rowBufferUpdates;
 		PCnext = PCcurr + 1;
@@ -472,10 +483,6 @@ public:
 		QElem top = DRAM_Buffer[currRow][currCol].front();
 		popAndUpdate(Q, nextRow, nextCol);
 
-		if (lastAddr==make_pair(nextRow,nextCol))
-		{
-			/* code */
-		} else {
 		clockCycles += top.remainingCycles;
 		if (top.id)
 		{
@@ -486,17 +493,14 @@ public:
 				if (nextRegister == top.value)
 					nextRegister = -1;
 			}
+			lastAddr.first = currCol * 4 + currRow * ROWS;
+			lastAddr.second = data[currRow][currCol];
 		}
 		else
 			data[currRow][currCol] = top.value;
-		}
 
 		printDRAMCompletion(top.PCaddr, top.startCycle, clockCycles);
 		setNextDRAM(nextRow, nextCol, nextRegister);
-
-		//updating the last location
-		lastAddr.first=currRow;
-		lastAddr.second=currCol;
 	}
 
 	// set the next DRAM command to be executed (implements reordering)
@@ -604,7 +608,7 @@ public:
 		commandCount.clear();
 		commandCount.assign(commands.size(), 0);
 		DRAM_Buffer.clear();
-		lastAddr= {-1,-1};
+		lastAddr = {-1, -1};
 	}
 };
 
