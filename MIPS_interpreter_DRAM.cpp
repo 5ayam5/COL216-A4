@@ -59,6 +59,8 @@ public:
 	vector<int> commandCount;
 	// data structure to store info about requests sent to the DRAM, key is the row number and value is QElem
 	unordered_map<int, unordered_map<int, queue<QElem>>> DRAM_Buffer;
+	// last location accessed by DRAM is stored
+	pair<int, int> lastAddr;
 
 	// constructor to initialise the instruction set
 	MIPS_Architecture(ifstream &file, int row_delay, int col_delay)
@@ -593,6 +595,7 @@ public:
 		commandCount.clear();
 		commandCount.assign(commands.size(), 0);
 		DRAM_Buffer.clear();
+		lastAddr= make_pair(-1,-1);
 	}
 };
 
