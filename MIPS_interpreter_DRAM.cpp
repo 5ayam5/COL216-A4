@@ -2,8 +2,6 @@
 // Mallika Prabhakar 2019CS50440
 // Sayam Sethi 2019CS10399
 
-// @TODO forwarding
-
 #include <bits/stdc++.h>
 #include <boost/tokenizer.hpp>
 
