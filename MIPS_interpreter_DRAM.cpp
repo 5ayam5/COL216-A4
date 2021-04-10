@@ -402,7 +402,7 @@ public:
 				else if (--DRAMbuffer[currRow][currCol].front().remainingCycles == 0)
 					finishCurrDRAM();
 			}
-			printCycleExecution(command);
+			printCycleExecution(command, PCcurr);
 		}
 		while (!DRAMbuffer.empty())
 			finishCurrDRAM();
@@ -516,19 +516,20 @@ public:
 	// prints the cycle info of DRAM delay
 	void printDRAMCompletion(int PCaddr, int begin, int end, string action = "executed")
 	{
-		cout << begin << '-' << end << " (DRAM call " << action << "): ";
+		cout << begin << '-' << end << " (DRAM call " << action << "): (PC address " << PCaddr << ") ";
 		for (auto s : commands[PCaddr])
 			cout << s << ' ';
 		cout << "\n\n";
 	}
 
 	// print cycle info
-	void printCycleExecution(vector<string> &command)
+	void printCycleExecution(vector<string> &command, int PCaddr)
 	{
 		if (isDRAM)
 			cout << clockCycles << ": (DRAM call queued) ";
 		else
 			cout << clockCycles << ": " << (command[0] == "lw" ? "(used forwarding) " : "");
+		cout << "(PC address " << PCaddr << ") ";
 		for (auto &s : command)
 			cout << s << ' ';
 		cout << '\n';
