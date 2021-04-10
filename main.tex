@@ -10,67 +10,76 @@
 \maketitle
 
 \section{Assumptions}
-The following hardware assumptions were made in the final design of the \textbf{MIPS Interpreter}:
+The following hardware assumptions were made in the design of the \textbf{MIPS Processor}:
 \begin{enumerate}
     \item There are \textbf{three ports} for communication with the processor:
         \begin{enumerate}
             \item A \textbf{bidirectional port} with the \textbf{registers} (the call is issued at the beginning of cycle and result obtained within the same cycle).
             \item An \textbf{output port} to send the DRAM request to the \textbf{DRAM queue} (explained in detail in the next point).
-            \item An \textbf{input port} to receive the result of the DRAM request (with corresponding register updates, if any) after delay.
+            \item An \textbf{input port} to receive, and accept or reject the result of the DRAM request (with corresponding register updates, if any) after delay.
         \end{enumerate}
     \item The \textbf{DRAM architecture} is as follows:
         \begin{enumerate}
             \item It contains a \textbf{2D square array} of $1024$ rows with each row having $1024$ bytes ($256$ words).
             \item It contains another storage location called the \textbf{Row buffer} which is used to store the current memory retrieval row.
-            \item To enhance the non-blocking nature of the DRAM, a \textbf{queue} is also present which contains all the required information about the pending load/store instructions.
+            \item To implement non-blocking and reordering of the DRAM, a \textbf{queue} is also present which contains all the required information about the pending load/store instructions. It is used to execute the DRAM instructions and also determine which instruction to execute next (or ignore). It can store atmost $32$ instructions at a time.
         \end{enumerate}
-    \item There is a \textbf{common access counter} which keeps a track of number of pending updates for each register.
+    \item There is a \textbf{common access \{cycle, address\} pair} which keeps a track of the last instruction which loads a value into each register. It can be accessed by both the processor and the DRAM.
+    \item A \textbf{pair of \{address, value\}} which stores the value of the DRAM location last interacted with (stored to/ loaded from).
 \end{enumerate}
-(Points 2(c) and 3 were assumed only for the second design choice of Part 2)
+
+
+\section{Changes and Additions to Minor Code}
+\begin{enumerate}
+    \item A new data type $QElem$ was created to contain all the necessary details for instructions
+    \item Variable changes: $registersBuffer$ changed to $registersAddrDRAM$, $lastAddr$ added
+    \item Instead of having the $updateRegisterBuffer$ function, we created functions $finishCurrDRAM$ and $setNextDRAM$ along with the helper function $popAndUpdate$ for the same purpose because of the change of queue into an unordered\_map of unordered\_map of queue for our modified implementation.
+    \item Following functions were modified: $addi$, $slt$, $op$, $bOP$, $lw$, $sw$,\\ $locateAddress$, $executeCommands$, $bufferUpdate$,\\ $printDRAMCompletion$, $printCycleExecution$, $initVars$ because of the same reason as stated above.
+    \item Remaining functions, namely- $MIPS\_Architecture$ (constructor), $add$, $sub$, $mul$, $beq$, $bne$, $j$, $checkLabel$, $checkRegister$, $checkRegisters$,\\ $parseCommand$, $constructCommands$, $printRegisters$, $handleExit$,\\ $main$ remained the same. 
+\end{enumerate}
 
 
 \section{Implementation}
-\subsection{Part 1}
-The implementation in Part 1 was a simple extension of the code for Assignment 3. The only instructions that had to be modified were those of $lw$ and $sw$. A $delay$ variable was introduced to keep a track of number of cycles taken for each instruction.
-
-\subsection{Part 2}
-\subsubsection{Design Choice 1}
-In this design, parallel execution of DRAM retrieval and register calculations is carried out. In accordance with sequential execution of the instructions, the following design decisions were made:
-\begin{enumerate}
-    \item The initialisation of DRAM request was done in the sequential order of the instructions.
-    \item After a request has been sent, following instructions may be executed if they are ``safe".
-\end{enumerate}
-``Safe" instructions here refer to those register-only instructions which don't use the register to which data is being loaded by the DRAM. Consequently, if a store instruction is being executed, all register-only instructions are ``safe".\\
-\textbf{Note:} This design was implemented in an earlier commit which was then modified to implement Design 2.
-
-\subsubsection{Design Choice 2}
-This design is architecturally more complex as it requires a queue implementation and a few checks before deciding between execution of the instruction or waiting. The following modifications were made with respect to the previous implementation:
-\begin{enumerate}
-    \item Instead of a single instruction being executed and stored at a time by the DRAM, a queue was introduced to store the list of pending instructions.
-    \item A counter was used to keep a track of the number of times a particular register had pending updates.
-    \item For each command to be executed, the counter of the required registers was first checked. If none of them had pending updates, the command was executed, else execution was paused until the next DRAM deque, when this check was repeated.
-    \item The queue contains information about the register (for load), the value (for store), the address. For additional debugging and software implementation, the queue also contains the delay cost of that instruction, the cycle number when the instruction actually began to execute and the PC address of the command (this would not be required for a physical implementation since the abstract concept of clock cycles in the interpreter is converted to actual hardware).
-\end{enumerate}
-\textbf{Note:} For simplification of the interpreter code, an actual row buffer isn't maintained but the row number for the instruction is stored in the queue (and delay is calculated beforehand). To implement the same, another variable of the actual buffer row along with the buffer data wound be required.
+The idea to use a queue for every row and column arose from the fact that every $lw$ instruction requires the previous stores to that location be completed. The queue helped in ensuring this dependency. Then, to skip the redundant load instructions, the last address and the cycle in which the request has been issued has been stored which uniquely determines the instruction.\par
+The information pushed in the queue is the instruction type, value (register number for load, register value for store), and the cycle in which the request was issued. Other information stored is not required by the physical hardware, but by the simulator to print relevant information. This requires $1+32+32$ bits of memory. Thus, the complete queue requires $9\cdot32$ bytes of memory in the case a single bit cannot be stored separately.\par
+The idea for execution of the instruction is the same as that used in the minor code. However, popping of the queue and setting the next instruction is changed to incorporate reordering and priority selection.\par
+In the case of no priority, i.e., when there is no dependent instruction which requires immediate execution, an instruction of the same column is attempted to be executed. If the queue of that column is empty, then an instruction of the same row is attempted to be executed. If the row is empty too, then the first element of the unordered\_map is chosen. In the case of priority, the required \{row, column\} is chosen.\par
+Before choosing the next instruction, in the case of a load instruction, the \{last address, cycle number\} is matched with the corresponding register. If it doesn't match, then that element is simply popped from the queue without executing it.\par
+Additionally, to save clock cycles, forwarding is implemented by storing the \{address, value\} of the last interaction with DRAM. Also, rejection of DRAM requests is introduced which helps in execution of ``unsafe" instructions updating a register having an ongoing DRAM load and marking that instruction as safe.
 
 
 \section{Strengths and Weaknesses}
+
 \subsection{Strengths}
-The design used in second design choice is relatively complex, however, it helps in saving the waiting cycles in most cases. The completion of store instructions require no waiting whatsoever, although they might have to be completed so that another pending load instruction is executed which is required by some register.\par
-This also ensures the execution of every single safe instruction possible before a dependent load instruction execution (if any) is completed for an unsafe instruction. Another possible tweak to this is to simply ignore all loads called on the same register except for the last one (however, this redundancy is induced by the programmer and hence it might not be a good idea to perform this optimisation since such code might be intentional. Hence, this implementation in the design was omitted).
+The reordering of instructions is decided in such a way that it reduces the number of times the row buffer is written back and updated with a new buffer as much as possible.\par
+The design choice implements reordering (and skipping) of DRAM instructions with the least amount of additional data storage required. The heaviest part of the algorithm is the selection of the next instruction, which can happen in the same clock cycle in which a previous instruction is completed.\par
+The skipping of instructions helps in avoiding a lot of redundant loads which reduce the number of cycles taken to execute the code by a lot. Forwarding of instructions ensures that if the user is working with a particular location in the memory, the load time is greatly reduced.\par
+The maximum size of the \textbf{queue} is set as $32$ since this allows for maximum data capacity without having the need to make the DRAM access blocking (on reaching maximum size). Any larger would lead to unused memory for most of the times and any smaller would lead to frequent blocking.
 
 \subsection{Weaknesses}
-The design is pretty intensive and requires multiple checks. This will translate to a comparatively complicated hardware and might possible require a higher value of instructions per cycle to actually perform the required instructions. This might not be possible for simpler or smaller hardware and the best possible optimisation in such cases would be choice 1 (which has the disadvantage of not making full use of the waiting cycles).
-
+The design is kept as simple as possible to reduce the hardware complexity of the processor. This led to the pushing of every store instruction to the \textbf{queue} and the same leads to some redundant store operations. Removing this redundancy would lead to using a data structure whose size would be comparable to the data memory, i.e.\ $2^{20}$ bytes, hence the inefficiency of $sw$.\par
+The retrieval time for the next most optimal instruction has been kept as small as possible which has lead to the chance of selection of a slightly sub-optimal instruction at times (this is governed by the hash values of the row/column). To enhance the quality of selection, order of the arrival of instructions would need to be maintained which would lead to a slower selection (spanning over multiple clock cycles) and would require memory comparable to the size of the instructions (which, in the worst case can be equal to the size of the data memory, i.e.\ $2^{20}$ bytes).
 
 \section{Testing Strategy}
-Testing was pretty simple to be carried out for Part 1, since the order of instruction is irrelevant to the implementation. Testing with the same cases used for Part 2 was carried out.\par
-For Part 2, the testing was carried keeping the following cases in mind:
+Testing was carried keeping the following cases in mind:
 \begin{enumerate}
-    \item Queuing up of DRAM instructions while safe instructions are parallelly executed.
+    \item Queuing up of DRAM instructions while safe instructions are executed in parallel.
     \item Queuing up of instructions along with an unsafe instruction requiring a pending instruction to be completed.
     \item Multiple load/store instructions involving the same register so that the queue handling is tested effectively.
-    \item Tested on large cases which were give for Assignment 3 and Minor which had some other combinations of cases that were not handled above (like a combination of safe and unsafe load instructions).
+    \item Tested on large cases which were give for Assignment 3 and Minor which had some other combinations of cases that were not handled above.
+\end{enumerate}
+\subsection*{Test Cases:}
+\begin{enumerate}
+    \item \textbf{lw.asm -} single load word operation
+    \item \textbf{sw.asm -} single store word operation
+    \item \textbf{lwLocate.asm -} multiple load words at same location
+    \item \textbf{swLocate.asm -}  multiple store words at the same location
+    \item \textbf{size.asm -}  a large number of commands to show max size of data structure
+    \item \textbf{unsafeAddress -} testcase with address register unsafe
+    \item \textbf{random.asm -} initial testing of overwrite
+    \item \textbf{random2.asm -} rejected DRAM testing
+    \item \textbf{random3.asm -} a random testcase
+    \item \textbf{rand.asm -} to test reordering
 \end{enumerate}
 
 \end{document}
