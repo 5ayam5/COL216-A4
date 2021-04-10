@@ -39,7 +39,7 @@ private:
 
 public:
 	// constants
-	static const int MAX = (1 << 20), ROWS = (1 << 10);
+	static const int MAX = (1 << 20), ROWS = (1 << 10), DRAM_MAX = (1 << 5);
 	// DRAM delays
 	int row_access_delay, col_access_delay;
 	// instruction set
@@ -49,16 +49,16 @@ public:
 	// vector to store the commands in input program
 	vector<vector<string>> commands;
 	// "dynamic" vars
-	int registers[32], PCcurr, PCnext, delay, currRow, currCol, clockCycles, rowBufferUpdates;
+	int registers[32], PCcurr, PCnext, delay, currRow, currCol, clockCycles, rowBufferUpdates, DRAMsize;
 	pair<int, int> registersAddrDRAM[32];
 	// data stored in allocated memory
 	vector<vector<int>> data;
-	// keep track of number of times each command was executed
-	vector<int> commandCount;
+	vector<int> buffer, commandCount;
 	// data structure to store info about requests sent to the DRAM, key is the row number and value is QElem
-	unordered_map<int, unordered_map<int, queue<QElem>>> DRAM_Buffer;
+	unordered_map<int, unordered_map<int, queue<QElem>>> DRAMbuffer;
 	// last location accessed by DRAM is stored
 	pair<int, int> lastAddr;
+	bool isDRAM;
 
 	// constructor to initialise the instruction set
 	MIPS_Architecture(ifstream &file, int row_delay, int col_delay)
@@ -96,15 +96,10 @@ public:
 			return 1;
 		try
 		{
-			if (registersAddrDRAM[registerMap[r1]] != make_pair(-1, -1))
-			{
-				if (DRAM_Buffer[currRow][currCol].front().issueCycle == registersAddrDRAM[registerMap[r1]].first)
-					return -registerMap[r1] - 1;
-				registersAddrDRAM[registerMap[r1]] = {-1, -1};
-			}
 			if (registersAddrDRAM[registerMap[r2]] != make_pair(-1, -1))
 				return -registerMap[r2] - 1;
 			registers[registerMap[r1]] = registers[registerMap[r2]] + stoi(num);
+			registersAddrDRAM[registerMap[r1]] = {-1, -1};
 			PCnext = PCcurr + 1;
 			return 0;
 		}
@@ -143,17 +138,12 @@ public:
 	{
 		if (!checkRegisters({r1, r2, r3}) || registerMap[r1] == 0)
 			return 1;
-		if (registersAddrDRAM[registerMap[r1]] != make_pair(-1, -1))
-		{
-			if (DRAM_Buffer[currRow][currCol].front().issueCycle == registersAddrDRAM[registerMap[r1]].first)
-				return -registerMap[r1] - 1;
-			registersAddrDRAM[registerMap[r1]] = {-1, -1};
-		}
 		if (registersAddrDRAM[registerMap[r2]] != make_pair(-1, -1))
 			return -registerMap[r2] - 1;
 		if (registersAddrDRAM[registerMap[r3]] != make_pair(-1, -1))
 			return -registerMap[r3] - 1;
 		registers[registerMap[r1]] = operation(registers[registerMap[r2]], registers[registerMap[r3]]);
+		registersAddrDRAM[registerMap[r1]] = {-1, -1};
 		PCnext = PCcurr + 1;
 		return 0;
 	}
@@ -208,15 +198,19 @@ public:
 			return address.second;
 
 		PCnext = PCcurr + 1;
-		if (address.second == lastAddr.first && (registersAddrDRAM[registerMap[r]] == make_pair(-1, -1) || DRAM_Buffer[currRow][currCol].front().issueCycle != registersAddrDRAM[registerMap[r]].first))
+		if (address.second == lastAddr.first)
 		{
 			registers[registerMap[r]] = lastAddr.second;
 			registersAddrDRAM[registerMap[r]] = {-1, -1};
 			return 0;
 		}
 
-		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({1, PCcurr, registerMap[r], clockCycles + 1});
+		if (DRAMsize == DRAM_MAX)
+			return -33;
+		isDRAM = true;
+		DRAMbuffer[address.second / ROWS][(address.second % ROWS) / 4].push({1, PCcurr, registerMap[r], clockCycles + 1});
 		registersAddrDRAM[registerMap[r]] = {clockCycles + 1, address.second};
+		++DRAMsize;
 		return 0;
 	}
 
@@ -231,10 +225,12 @@ public:
 		if (registersAddrDRAM[registerMap[r]] != make_pair(-1, -1))
 			return -registerMap[r] - 1;
 
+		if (DRAMsize == DRAM_MAX)
+			return -33;
 		lastAddr = {address.second, registers[registerMap[r]]};
-
-		DRAM_Buffer[address.second / ROWS][(address.second % ROWS) / 4].push({0, PCcurr, registers[registerMap[r]], clockCycles + 1});
-		++rowBufferUpdates;
+		isDRAM = true;
+		DRAMbuffer[address.second / ROWS][(address.second % ROWS) / 4].push({0, PCcurr, registers[registerMap[r]], clockCycles + 1});
+		++rowBufferUpdates, ++DRAMsize;
 		PCnext = PCcurr + 1;
 		return 0;
 	}
@@ -292,65 +288,6 @@ public:
 	bool checkRegisters(vector<string> regs)
 	{
 		return all_of(regs.begin(), regs.end(), [&](string r) { return checkRegister(r); });
-	}
-
-	/*
-		handle all exit codes:
-		0: correct execution
-		1: register provided is incorrect
-		2: invalid label
-		3: unaligned or invalid address
-		4: syntax error
-		5: commands exceed memory limit
-	*/
-	void handleExit(int code)
-	{
-		switch (code)
-		{
-		case 1:
-			cerr << "Invalid register provided or syntax error in providing register\n";
-			break;
-		case 2:
-			cerr << "Label used not defined or defined too many times\n";
-			break;
-		case 3:
-			cerr << "Unaligned or invalid memory address specified\n";
-			break;
-		case 4:
-			cerr << "Syntax error encountered\n";
-			break;
-		case 5:
-			cerr << "Memory limit exceeded\n";
-			break;
-		default:
-			break;
-		}
-		if (code != 0)
-		{
-			cerr << "Error encountered at:\n";
-			for (auto &s : commands[PCcurr])
-				cerr << s << ' ';
-			cerr << '\n';
-		}
-
-		cout << "Exit code: " << code << '\n';
-
-		cout << "\nThe Row Buffer was updated " << rowBufferUpdates << " times.\n";
-		cout << "\nFollowing are the non-zero data values:\n";
-		for (int i = 0; i < ROWS; ++i)
-			for (int j = 0; j < ROWS / 4; ++j)
-				if (data[i][j] != 0)
-					cout << (ROWS * i + 4 * j) << '-' << (ROWS * i + 4 * j) + 3 << hex << ": " << data[i][j] << '\n'
-						 << dec;
-		cout << "\nTotal number of cycles: " << clockCycles << " + " << delay << " (cycles taken for code execution + final writeback delay)\n";
-		cout << "\nCount of instructions executed:\n";
-		for (int i = 0; i < (int)commands.size(); ++i)
-		{
-			cout << commandCount[i] << " times:\t";
-			for (auto &s : commands[i])
-				cout << s << ' ';
-			cout << '\n';
-		}
 	}
 
 	// parse the command assuming correctly formatted MIPS instruction (or label)
@@ -434,9 +371,9 @@ public:
 
 		initVars();
 		cout << "Cycle info:\n";
-		while (PCcurr < commands.size())
+		while (PCcurr < (int)commands.size())
 		{
-			delay = 0;
+			delay = 0, isDRAM = false;
 			vector<string> &command = commands[PCcurr];
 			if (instructions.find(command[0]) == instructions.end())
 			{
@@ -457,94 +394,102 @@ public:
 			++clockCycles;
 			++commandCount[PCcurr];
 			PCcurr = PCnext;
-			if (!DRAM_Buffer.empty())
+			if (!DRAMbuffer.empty())
 			{
 				// first lw/sw operation after DRAM_buffer emptied
 				if (currCol == -1)
-					setNextDRAM(DRAM_Buffer.begin()->first, DRAM_Buffer[DRAM_Buffer.begin()->first].begin()->first);
-				else if (--DRAM_Buffer[currRow][currCol].front().remainingCycles == 0)
+					setNextDRAM(DRAMbuffer.begin()->first, DRAMbuffer[DRAMbuffer.begin()->first].begin()->first);
+				else if (--DRAMbuffer[currRow][currCol].front().remainingCycles == 0)
 					finishCurrDRAM();
 			}
 			printCycleExecution(command);
 		}
-		while (!DRAM_Buffer.empty())
+		while (!DRAMbuffer.empty())
 			finishCurrDRAM();
 		bufferUpdate();
 		handleExit(0);
 	}
 
 	// finish the currently running DRAM instruction and set the next one
-	void finishCurrDRAM(int nextRegister = -1)
+	void finishCurrDRAM(int nextRegister = 32)
 	{
-		auto &Q = DRAM_Buffer[currRow][currCol];
+		auto &Q = DRAMbuffer[currRow][currCol];
 		int nextRow = currRow, nextCol = currCol;
-		QElem top = DRAM_Buffer[currRow][currCol].front();
+		QElem top = DRAMbuffer[currRow][currCol].front();
 		popAndUpdate(Q, nextRow, nextCol);
 
 		clockCycles += top.remainingCycles;
-		if (top.id)
+		if (top.id && registersAddrDRAM[top.value] != make_pair(-1, -1))
 		{
-			registers[top.value] = data[currRow][currCol];
+			registers[top.value] = buffer[currCol];
 			if (registersAddrDRAM[top.value].first == top.issueCycle)
 			{
 				registersAddrDRAM[top.value] = {-1, -1};
 				if (nextRegister == top.value)
-					nextRegister = -1;
+					nextRegister = 32;
 			}
 			lastAddr.first = currCol * 4 + currRow * ROWS;
-			lastAddr.second = data[currRow][currCol];
+			lastAddr.second = buffer[currCol];
+			printDRAMCompletion(top.PCaddr, top.startCycle, clockCycles);
+		}
+		else if (!top.id)
+		{
+			buffer[currCol] = top.value;
+			printDRAMCompletion(top.PCaddr, top.startCycle, clockCycles);
 		}
 		else
-			data[currRow][currCol] = top.value;
+			printDRAMCompletion(top.PCaddr, top.startCycle, clockCycles, "rejected");
 
-		printDRAMCompletion(top.PCaddr, top.startCycle, clockCycles);
 		setNextDRAM(nextRow, nextCol, nextRegister);
 	}
 
 	// set the next DRAM command to be executed (implements reordering)
-	void setNextDRAM(int nextRow, int nextCol, int nextRegister = -1)
+	void setNextDRAM(int nextRow, int nextCol, int nextRegister = 32)
 	{
-		if (DRAM_Buffer.empty())
+		if (DRAMbuffer.empty())
 		{
 			currCol = -1;
 			return;
 		}
-		if (nextRegister != -1)
+		if (nextRegister != 32)
 		{
 			nextRow = registersAddrDRAM[nextRegister].second / ROWS;
 			nextCol = (registersAddrDRAM[nextRegister].second % ROWS) / 4;
 		}
 
-		QElem top = DRAM_Buffer[nextRow][nextCol].front();
-		while (top.id && registersAddrDRAM[top.value].first != top.issueCycle && popAndUpdate(DRAM_Buffer[nextRow][nextCol], nextRow, nextCol))
-			top = DRAM_Buffer[nextRow][nextCol].front();
+		QElem top = DRAMbuffer[nextRow][nextCol].front();
+		while (top.id && registersAddrDRAM[top.value].first != top.issueCycle && popAndUpdate(DRAMbuffer[nextRow][nextCol], nextRow, nextCol, true))
+			top = DRAMbuffer[nextRow][nextCol].front();
 
-		if (DRAM_Buffer.empty())
+		if (DRAMbuffer.empty())
 		{
 			currCol = -1;
 			return;
 		}
 		bufferUpdate(nextRow, nextCol);
-		DRAM_Buffer[currRow][currCol].front().startCycle = clockCycles + 1;
-		DRAM_Buffer[currRow][currCol].front().remainingCycles = delay;
+		DRAMbuffer[currRow][currCol].front().startCycle = clockCycles + 1;
+		DRAMbuffer[currRow][currCol].front().remainingCycles = delay;
 	}
 
 	// pop the queue element and update the row and column if needed (returns false if DRAM empty after pop)
-	bool popAndUpdate(queue<QElem> &Q, int &row, int &col)
+	bool popAndUpdate(queue<QElem> &Q, int &row, int &col, bool skip = false)
 	{
+		if (skip)
+			printDRAMCompletion(Q.front().PCaddr, clockCycles, clockCycles, "skipped");
 		Q.pop();
+		--DRAMsize;
 		if (Q.empty())
 		{
-			DRAM_Buffer[row].erase(col);
-			if (DRAM_Buffer[row].empty())
+			DRAMbuffer[row].erase(col);
+			if (DRAMbuffer[row].empty())
 			{
-				DRAM_Buffer.erase(row);
-				if (!DRAM_Buffer.empty())
-					row = DRAM_Buffer.begin()->first;
+				DRAMbuffer.erase(row);
+				if (!DRAMbuffer.empty())
+					row = DRAMbuffer.begin()->first;
 			}
-			if (DRAM_Buffer.empty())
+			if (DRAMbuffer.empty())
 				return false;
-			col = DRAM_Buffer[row].begin()->first;
+			col = DRAMbuffer[row].begin()->first;
 			return true;
 		}
 		return false;
@@ -554,20 +499,24 @@ public:
 	void bufferUpdate(int row = -1, int col = -1)
 	{
 		if (row == -1)
-			delay = (currRow != -1) * row_access_delay, rowBufferUpdates += (currRow != -1);
+		{
+			delay = (currRow != -1) * row_access_delay;
+			if (currRow != -1)
+				++rowBufferUpdates, data[currRow] = buffer, buffer = vector<int>();
+		}
 		else if (currRow == -1)
-			delay = row_access_delay + col_access_delay, ++rowBufferUpdates;
+			delay = row_access_delay + col_access_delay, ++rowBufferUpdates, buffer = data[row];
 		else if (currRow != row)
-			delay = 2 * row_access_delay + col_access_delay, ++rowBufferUpdates;
+			delay = 2 * row_access_delay + col_access_delay, ++rowBufferUpdates, data[currRow] = buffer, buffer = data[row];
 		else
 			delay = col_access_delay;
 		currRow = row, currCol = col;
 	}
 
 	// prints the cycle info of DRAM delay
-	void printDRAMCompletion(int PCaddr, int begin, int end)
+	void printDRAMCompletion(int PCaddr, int begin, int end, string action = "executed")
 	{
-		cout << begin << '-' << end << " (DRAM call executed): ";
+		cout << begin << '-' << end << " (DRAM call " << action << "): ";
 		for (auto s : commands[PCaddr])
 			cout << s << ' ';
 		cout << "\n\n";
@@ -576,10 +525,10 @@ public:
 	// print cycle info
 	void printCycleExecution(vector<string> &command)
 	{
-		if (command[0] == "lw" || command[0] == "sw")
-			cout << clockCycles << " (DRAM call queued): ";
+		if (isDRAM)
+			cout << clockCycles << ": (DRAM call queued) ";
 		else
-			cout << clockCycles << ": ";
+			cout << clockCycles << ": " << (command[0] == "lw" ? "(used forwarding) " : "");
 		for (auto &s : command)
 			cout << s << ' ';
 		cout << '\n';
@@ -596,16 +545,76 @@ public:
 		cout << dec << "\n";
 	}
 
+	/*
+		handle all exit codes:
+		0: correct execution
+		1: register provided is incorrect
+		2: invalid label
+		3: unaligned or invalid address
+		4: syntax error
+		5: commands exceed memory limit
+	*/
+	void handleExit(int code)
+	{
+		switch (code)
+		{
+		case 1:
+			cerr << "Invalid register provided or syntax error in providing register\n";
+			break;
+		case 2:
+			cerr << "Label used not defined or defined too many times\n";
+			break;
+		case 3:
+			cerr << "Unaligned or invalid memory address specified\n";
+			break;
+		case 4:
+			cerr << "Syntax error encountered\n";
+			break;
+		case 5:
+			cerr << "Memory limit exceeded\n";
+			break;
+		default:
+			break;
+		}
+		if (code != 0)
+		{
+			cerr << "Error encountered at:\n";
+			for (auto &s : commands[PCcurr])
+				cerr << s << ' ';
+			cerr << '\n';
+		}
+
+		cout << "Exit code: " << code << '\n';
+
+		cout << "\nThe Row Buffer was updated " << rowBufferUpdates << " times.\n";
+		cout << "\nFollowing are the non-zero data values:\n";
+		for (int i = 0; i < ROWS; ++i)
+			for (int j = 0; j < ROWS / 4; ++j)
+				if (data[i][j] != 0)
+					cout << (ROWS * i + 4 * j) << '-' << (ROWS * i + 4 * j) + 3 << hex << ": " << data[i][j] << '\n'
+						 << dec;
+		cout << "\nTotal number of cycles: " << clockCycles << " + " << delay << " (cycles taken for code execution + final writeback delay)\n";
+		cout << "\nCount of instructions executed:\n";
+		for (int i = 0; i < (int)commands.size(); ++i)
+		{
+			cout << commandCount[i] << " times:\t";
+			for (auto &s : commands[i])
+				cout << s << ' ';
+			cout << '\n';
+		}
+	}
+
 	// initialize variables before executing commands
 	void initVars()
 	{
-		clockCycles = 0, PCcurr = 0, rowBufferUpdates = 0, currRow = -1, currCol = -1;
+		clockCycles = 0, PCcurr = 0, rowBufferUpdates = 0, DRAMsize = 0, currRow = -1, currCol = -1;
 		fill_n(registers, 32, 0);
 		fill_n(registersAddrDRAM, 32, make_pair(-1, -1));
 		data = vector<vector<int>>(ROWS, vector<int>(ROWS >> 2, 0));
+		buffer = vector<int>(ROWS >> 2, 0);
 		commandCount.clear();
 		commandCount.assign(commands.size(), 0);
-		DRAM_Buffer.clear();
+		DRAMbuffer.clear();
 		lastAddr = {-1, -1};
 	}
 };
