@@ -492,7 +492,7 @@ public:
 			col = DRAMbuffer[row].begin()->first;
 			return true;
 		}
-		return false;
+		return true;
 	}
 
 	// implement buffer update
